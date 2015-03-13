@@ -44,6 +44,7 @@ define(function(require, module, exports) {
 
         var btnRun, lastRun, mnuRunWith, process, mnuRunCfg;
         var model, datagrid, defConfig;
+        var tabsProcs = {};
 
         var loaded = false;
         function load(){
@@ -356,8 +357,8 @@ define(function(require, module, exports) {
             }), c += 100, plugin);
 
             // Other Menus
-            
-            menus.addItemToMenu(tabs.getElement("mnuEditors"), 
+
+            menus.addItemToMenu(tabs.getElement("mnuEditors"),
                 new ui.item({
                     caption: "New Run Configuration",
                     hotkey: "{commands.commandManager.showoutput}",
@@ -454,12 +455,12 @@ define(function(require, module, exports) {
                     value: "default",
                     width: "10%"
                 }];
-                
+
                 layout.on("eachTheme", function(e){
                     var height = parseInt(ui.getStyleRule(".bar-preferences .blackdg .tree-row", "height"), 10) || 24;
                     model.rowHeightInner = height;
                     model.rowHeight = height + 1;
-                    
+
                     if (e.changed) (datagrid).resize(true);
                 });
 
@@ -514,15 +515,15 @@ define(function(require, module, exports) {
                             onclick: function(){
                                 var node = datagrid.selection.getSelectedNodes()[0];
                                 if (!node) return;
-        
+
                                 var json = settings.getJson("project/run/configs") || {};
                                 var wasDefault = json[node.name]["default"];
                                 for (var name in json){ delete json[name]["default"]; }
                                 json[node.name]["default"] = !wasDefault;
                                 settings.setJson("project/run/configs", json);
-        
+
                                 defConfig = wasDefault ? null : node.name;
-        
+
                                 reloadModel();
                                 transformButton();
                             }
@@ -561,7 +562,7 @@ define(function(require, module, exports) {
                         if (e.process.name == state) {
                             process = e.process;
 
-                            decorateProcess();
+                            decorateProcess(process);
                             transformButton("stop");
 
                             run.off("create", wait);
@@ -582,6 +583,12 @@ define(function(require, module, exports) {
                     return transformButton();
 
                 var path = findTabToRun();
+                if (tabsProcs[path] && tabsProcs[path].running) {
+                    transformButton("stop");
+                    return;
+                }
+                transformButton();
+
                 if (path) {
                     btnRun.enable();
                     btnRun.setAttribute("command", "run");
@@ -748,12 +755,15 @@ define(function(require, module, exports) {
                     callback: function(proc, tab) {
                         if (defConfig) {
                             process = proc;
-                            decorateProcess();
-                            transformButton("stop");
-
                             settings.set("state/run/process", process.name);
-
                         }
+                        else {
+                            tabsProcs[path] = proc;
+                        }
+
+                        decorateProcess(proc, path);
+                        if (defConfig || currentTabPath() == path)
+                            transformButton("stop");
 
                         callback && callback(proc, tab);
                     }
@@ -763,32 +773,46 @@ define(function(require, module, exports) {
             lastRun = [runner, path];
         }
 
-        function decorateProcess(){
+        function decorateProcess(process, tab){
             process.on("away", function(){
-                btnRun.disable();
+                if (defConfig || currentTabPath() == tab)
+                    btnRun.disable();
             }, plugin);
             process.on("back", function(){
-                btnRun.enable();
+                if (defConfig || currentTabPath() == tab)
+                    btnRun.enable();
             }, plugin);
             process.on("stopping", function(){
-                btnRun.disable();
+                if (defConfig || currentTabPath() == tab)
+                    btnRun.disable();
             }, plugin);
             process.on("stopped", function(){
-                btnRun.enable();
-
-                var path = transformButton();
-                if (path || lastRun || defConfig)
+                if (defConfig || currentTabPath() == tab) {
                     btnRun.enable();
-                else
-                    btnRun.disable();
 
-                settings.set("state/run/process", "");
+                    var path = transformButton();
+                    if (path || lastRun || defConfig)
+                        btnRun.enable();
+                    else
+                        btnRun.disable();
+
+                    if (defConfig)
+                        settings.set("state/run/process", "");
+                    else
+                        delete tabsProcs[path];
+                }
             }, plugin);
         }
 
-        function findTabToRun(){
+        function currentTabPath() {
             var path = tabs.focussedTab && tabs.focussedTab.path;
             if (path) return path.replace(/^\//, "");
+            return false;
+        }
+
+        function findTabToRun(){
+            var path = currentTabPath();
+            if (path) return path;
 
             var foundActive;
             if (tabs.getPanes().every(function(pane) {
@@ -844,14 +868,21 @@ define(function(require, module, exports) {
         }
 
         function stop(callback) {
-            if (process)
-                process.stop(function(err) {
+            var proc;
+            if (defConfig)
+                proc = process;
+            else
+                proc = tabsProcs[findTabToRun()];
+
+            if (proc)
+                proc.stop(function(err) {
                     if (err) {
                         showError(err.message || err);
                         transformButton();
                     }
 
-                    debug.stop();
+                    if (defConfig)
+                        debug.stop();
 
                     callback(err);
                 });
